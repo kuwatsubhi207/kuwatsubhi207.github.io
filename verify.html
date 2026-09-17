@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Verifikasi Foto — TimestampCamera</title>
+    <style>
+      :root {
+        --bg: #0d0d0d;
+        --surface: #1a1a1a;
+        --text: #f2f2f2;
+        --text-dim: #9a9a9a;
+        --ok-bg: #17301f;
+        --ok-fg: #6fd68a;
+        --bad-bg: #331414;
+        --bad-fg: #ff8a8a;
+        --warn-bg: #2a2a22;
+        --warn-fg: #d8cf8a;
+        --accent: #4da3ff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        justify-content: center;
+        padding: 24px 16px 60px;
+      }
+      .container {
+        width: 100%;
+        max-width: 480px;
+      }
+      h1 {
+        font-size: 20px;
+        font-weight: 600;
+        margin: 8px 0 20px;
+        text-align: center;
+      }
+      .card {
+        background: var(--surface);
+        border-radius: 14px;
+        padding: 20px;
+        margin-bottom: 16px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 12px;
+      }
+      .badge.ok {
+        background: var(--ok-bg);
+        color: var(--ok-fg);
+      }
+      .badge.bad {
+        background: var(--bad-bg);
+        color: var(--bad-fg);
+      }
+      .badge.warn {
+        background: var(--warn-bg);
+        color: var(--warn-fg);
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 13px;
+      }
+      .row:last-child {
+        border-bottom: none;
+      }
+      .row .label {
+        color: var(--text-dim);
+        flex-shrink: 0;
+      }
+      .row .value {
+        text-align: right;
+        word-break: break-all;
+      }
+      p {
+        font-size: 14px;
+        line-height: 1.5;
+        color: var(--text-dim);
+        margin: 6px 0;
+      }
+      code {
+        background: rgba(255, 255, 255, 0.08);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .upload-section {
+        margin-top: 4px;
+      }
+      .upload-section label {
+        display: block;
+        font-size: 13px;
+        color: var(--text-dim);
+        margin-bottom: 10px;
+      }
+      input[type="file"] {
+        display: block;
+        width: 100%;
+        color: var(--text);
+        font-size: 13px;
+      }
+      #compareResult {
+        margin-top: 14px;
+      }
+      .footer-note {
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-dim);
+        margin-top: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🔍 Verifikasi Foto TimestampCamera</h1>
+
+      <div class="card">
+        <div id="status"><p>Memeriksa…</p></div>
+
+        <div id="record" style="display: none">
+          <div class="row">
+            <span class="label">ID</span><span class="value" id="rid"></span>
+          </div>
+          <div class="row">
+            <span class="label">Diambil pada</span
+            ><span class="value" id="rcaptured"></span>
+          </div>
+          <div class="row">
+            <span class="label">Aplikasi</span
+            ><span class="value" id="rapp"></span>
+          </div>
+          <div class="row">
+            <span class="label">Algoritma</span
+            ><span class="value" id="ralgo"></span>
+          </div>
+          <div class="row">
+            <span class="label">Hash terdaftar</span
+            ><span class="value" id="rhash"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card upload-section">
+        <label
+          >Punya file aslinya? Unggah untuk membandingkan hash-nya secara
+          langsung di browser kamu (file TIDAK diupload ke server mana pun —
+          hash dihitung lokal).</label
+        >
+        <input type="file" id="fileInput" accept="image/*" />
+        <div id="compareResult"></div>
+      </div>
+
+      <p class="footer-note">
+        Verifikasi ini membandingkan hash SHA-256 file dengan yang didaftarkan
+        saat foto diambil oleh aplikasi TimestampCamera. Hash dihitung langsung
+        di perangkat kamu memakai Web Crypto API bawaan browser.
+      </p>
+    </div>
+
+    <script>
+      // ---- GANTI dengan URL Worker Cloudflare kamu (yang sama dengan HASH_REGISTER_API_URL / VERIFICATION_API_BASE di kode Android) ----
+      const API_BASE =
+        "https://timestampcamera.kuwatsubi207.workers.dev/api/v1";
+
+      let currentRecord = null;
+
+      function getIdFromUrl() {
+        return new URLSearchParams(window.location.search).get("id");
+      }
+
+      function escapeHtml(str) {
+        const div = document.createElement("div");
+        div.textContent = str;
+        return div.innerHTML;
+      }
+
+      async function sha256Hex(buffer) {
+        const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+        return Array.from(new Uint8Array(hashBuffer))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      async function loadRecord() {
+        const id = getIdFromUrl();
+        const statusEl = document.getElementById("status");
+
+        if (!id) {
+          statusEl.innerHTML =
+            '<div class="badge warn">ID tidak ditemukan</div><p>Tidak ada parameter <code>?id=</code> di URL ini. Buka halaman ini lewat scan QR pada foto TimestampCamera.</p>';
+          return;
+        }
+
+        try {
+          const res = await fetch(
+            `${API_BASE}/verify/${encodeURIComponent(id)}`,
+          );
+
+          if (res.status === 404) {
+            statusEl.innerHTML = `<div class="badge warn">TIDAK TERDAFTAR</div><p>ID <code>${escapeHtml(
+              id,
+            )}</code> tidak ditemukan di database verifikasi. Foto ini mungkin belum selesai didaftarkan (coba lagi beberapa menit lagi), atau bukan berasal dari TimestampCamera.</p>`;
+            return;
+          }
+
+          if (!res.ok) {
+            statusEl.innerHTML = `<div class="badge warn">Gagal memeriksa</div><p>Server mengembalikan status ${res.status}. Coba muat ulang halaman ini.</p>`;
+            return;
+          }
+
+          const data = await res.json();
+          currentRecord = data;
+
+          statusEl.innerHTML =
+            '<div class="badge ok">TERDAFTAR</div><p>Metadata di bawah ini terdaftar untuk ID ini. Unggah file foto aslinya di bawah untuk memverifikasi keasliannya sepenuhnya.</p>';
+          document.getElementById("record").style.display = "block";
+          document.getElementById("rid").textContent = data.id;
+          document.getElementById("rcaptured").textContent = data.captured_at;
+          document.getElementById("rapp").textContent =
+            `${data.app} v${data.version}`;
+          document.getElementById("ralgo").textContent = data.algorithm;
+          document.getElementById("rhash").textContent = data.sha256;
+        } catch (e) {
+          statusEl.innerHTML = `<div class="badge warn">Tidak bisa terhubung ke server</div><p>${escapeHtml(
+            e.message,
+          )}</p>`;
+        }
+      }
+
+      document
+        .getElementById("fileInput")
+        .addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          const resultEl = document.getElementById("compareResult");
+          if (!file) return;
+
+          if (!currentRecord) {
+            resultEl.innerHTML =
+              '<p style="color: var(--warn-fg);">Tidak ada data terdaftar untuk ID ini, jadi tidak bisa dibandingkan.</p>';
+            return;
+          }
+
+          resultEl.innerHTML = "<p>Menghitung hash file…</p>";
+          try {
+            const buffer = await file.arrayBuffer();
+            const hash = await sha256Hex(buffer);
+
+            if (hash.toLowerCase() === currentRecord.sha256.toLowerCase()) {
+              resultEl.innerHTML =
+                '<div class="badge ok">✓ COCOK</div><p>File yang kamu unggah IDENTIK dengan yang didaftarkan saat pengambilan foto.</p>';
+            } else {
+              resultEl.innerHTML = `<div class="badge bad">✗ TIDAK COCOK</div><p>File yang kamu unggah BERBEDA dari yang didaftarkan — kemungkinan sudah diedit/dikompres ulang, atau bukan file yang sama.</p><div class="row"><span class="label">Hash file ini</span><span class="value">${hash}</span></div>`;
+            }
+          } catch (err) {
+            resultEl.innerHTML = `<p style="color: var(--warn-fg);">Gagal menghitung hash: ${escapeHtml(
+              err.message,
+            )}</p>`;
+          }
+        });
+
+      loadRecord();
+    </script>
+  </body>
+</html>
